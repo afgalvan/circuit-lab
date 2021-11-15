@@ -6,7 +6,7 @@ from typing import List, Tuple
 from numbers import Real
 from matplotlib.pyplot import plot, style, rcParams, title, xlabel, xticks, ylabel, show, yticks
 from pandas import DataFrame
-from numpy import polyfit, ndarray, exp, linspace
+from numpy import log10, polyfit, ndarray, exp, linspace
 from numbers import Real
 
 
@@ -27,11 +27,17 @@ class ResultadoTeorico:
             i_max = -self.i_max()
         e = exp(-self.tiempo / (self.R * self.C))
         return i_max * e
-    
+
     def voltajes(self, carga: bool=True) -> List[Real]:
         if carga:
             return self.E * (1 - exp((-self.tiempo) / (self.R * self.C)))
         return self.E * exp((-self.tiempo) / (self.R * self.C))
+    
+    def log_vector(self) -> List[Real]:
+        return log10(self.corrientes() / self.i_max())
+
+    def constante_tiempo(self) -> Real:
+        return - (1 / polyfit(self.log_vector(), self.tiempo, 1)[0])
 
 
 class ResultadoExperimental:
@@ -41,6 +47,12 @@ class ResultadoExperimental:
         ultimo_tiempo = dataframe["t (ms)"].iloc[-1]
         tiempo_teorico = linspace(0, ultimo_tiempo, 50)
         self.teorico = ResultadoTeorico(tiempo_teorico)
+
+    def log_vector(self) -> List[Real]:
+        return log10(abs(self.dataframe["Ic (mA)"]) / self.teorico.i_max())
+    
+    def constante_tiempo(self) -> Real:
+        return - (1 / polyfit(self.log_vector(), self.dataframe["t (ms)"], 1)[0])
 
 
 def crear_tabla(tiempos: List[Real], corrientes: List[Real], voltajes: List[Real]) -> DataFrame:
@@ -54,24 +66,39 @@ def up_mil(micro_segundos: float) -> float:
     return micro_segundos * (10 ** -3)
 
 
-def graficar(titulo: str, resultados: ResultadoExperimental, teorico=False, y_axis: str="Ic (mA)", color: str="#3EA6FF") -> None:
+def graficar(titulo: str, resultados: ResultadoExperimental, teorico=False, log=False, y_axis="Ic (mA)", y_label="", color="#3EA6FF") -> None:
     x_axis = "t (ms)"
+    y_label = y_axis
     dataframe = resultados.dataframe
-    style.use("seaborn-whitegrid")
+    y_axis_vector = dataframe[y_axis]
 
+    agregar_teorico(teorico, log, resultados, color)
+
+    if log:
+        y_axis_vector = resultados.log_vector()
+    plot(dataframe[x_axis], y_axis_vector, color=color, marker="o", markerfacecolor=color, linewidth=0)
+    mostrar_grafica(titulo, y_label)
+
+
+def agregar_teorico(teorico: bool, log: bool, resultados: ResultadoExperimental, color: str) -> None:
     if teorico:
         teorico = resultados.teorico
-        corrientes = teorico.corrientes(resultados.carga)
-        plot(teorico.tiempo, corrientes, color=color)
-    plot(dataframe[x_axis], dataframe[y_axis], color=color, marker="o", markerfacecolor=color, linewidth=0)
+        y_axis_teorico = teorico.corrientes(resultados.carga)
+        if log:
+            y_axis_teorico = teorico.log_vector()
+        plot(teorico.tiempo, y_axis_teorico, color=color)
+
+
+def mostrar_grafica(titulo: str, y_axis_label: str) -> None:
+    style.use("seaborn-whitegrid")
     rcParams.update({"figure.figsize": (10, 8), "figure.dpi": 100})
     title(titulo)
     xlabel("t (s)")
-    ylabel("Ic (A)")
+    ylabel(y_axis_label)
     show()
 
 
-def error_porcentual(aceptado: float, experimental: float) -> str:
+def error_porcentual(experimental: float, aceptado: float) -> str:
     """
     Calcular error porcentual de un resultado experimental obtenido con
     respecto al aceptado
@@ -80,21 +107,14 @@ def error_porcentual(aceptado: float, experimental: float) -> str:
     return "{:.8f}%".format(porcentaje)
 
 
-def calcular_tiempo(dataframe: DataFrame) -> Tuple[Real, Real]:
-    resitencia_experimental = polyfit(dataframe["Ic (mA)"], dataframe["Vc (volts)"], 1)[0]
-    resistencia_teorica = dataframe["Vc (volts)"].iloc[-1] / dataframe["Ic (mA)"].iloc[-1]
-    return (resitencia_experimental, resistencia_teorica)
-
-
-def resultado_experimentacion(*dataframes: DataFrame) -> DataFrame:
-    resultados = [calcular_tiempo(d) for d in dataframes]
-    experimentales = map(lambda x: x[0], resultados)
-    aceptados = map(lambda x: x[1], resultados)
-    errores = [error_porcentual(acept, exp) for exp, acept in resultados]
+def resultado_experimentacion(*resultados: ResultadoExperimental) -> DataFrame:
+    experimentales = [r.constante_tiempo() for r in resultados]
+    aceptados = [r.teorico.constante_tiempo() for r in resultados]
+    errores = [error_porcentual(exp, acept) for exp, acept in zip(experimentales, aceptados)]
 
     return DataFrame({
         "Constante de tiempo": [f"t{i+1}" for i in range(len(resultados))],
-        "Experimental": experimentales,
-        "Teórico": aceptados,
-        "Error Porcentual": errores
+        "Experimental (s)": experimentales,
+        "Teórico (s)": aceptados,
+        "Error Porcentual (%)": errores
     })
