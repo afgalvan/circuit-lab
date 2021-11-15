@@ -68,7 +68,7 @@ def up_mil(micro_segundos: float) -> float:
 
 def graficar(titulo: str, resultados: ResultadoExperimental, teorico=False, log=False, y_axis="Ic (mA)", y_label="", color="#3EA6FF") -> None:
     x_axis = "t (ms)"
-    y_label = y_axis
+    y_label = y_axis if y_label == "" else y_label
     dataframe = resultados.dataframe
     y_axis_vector = dataframe[y_axis]
 
